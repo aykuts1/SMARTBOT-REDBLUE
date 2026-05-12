@@ -80,14 +80,11 @@ def entry_scan_job():
             logger.error(f"{symbol}: strateji hata - {e}")
             continue
 
-        # Crossover var ama filtreye takıldı?
+        # Crossover var ama filtreye takıldı? (Sadece özette gözükecek)
         if result.crossover_happened and not result.has_signal:
             filter_rejections.append(
                 (symbol, result.crossover_side, result.rejection_reason or "?")
             )
-            STATE.notifier.send(tg_fmt.fmt_filter_reject(
-                symbol, result.crossover_side, result.rejection_reason or "?"
-            ))
             continue
 
         if not result.has_signal:
