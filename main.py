@@ -36,7 +36,6 @@ logger = logging.getLogger("main")
 
 # ============= GLOBAL STATE =============
 class BotState:
-    """Bot global state - scheduler job'larından erişilir."""
     client: BybitClient = None
     notifier: TelegramNotifier = None
     pm: PositionManager = None
@@ -67,20 +66,29 @@ def entry_scan_job():
             df_30m = STATE.client.fetch_klines(
                 symbol, config.KLINE_INTERVAL_30M, config.KLINE_LIMIT
             )
-            df_2h = STATE.client.fetch_klines(
-                symbol, config.KLINE_INTERVAL_2H, config.KLINE_LIMIT
-            )
         except Exception as e:
             logger.warning(f"{symbol}: kline hata - {e}")
             continue
 
         try:
-            result = strategy.evaluate_symbol(df_30m, df_2h, symbol)
+            result = strategy.evaluate_symbol(df_30m, symbol)
         except Exception as e:
             logger.error(f"{symbol}: strateji hata - {e}")
             continue
 
-        # Crossover var ama filtreye takıldı? (Sadece özette gözükecek)
+        # 30dk taramada açık pozisyonların RSI eşiklerini güncelle
+        if STATE.pm.has(symbol):
+            try:
+                STATE.pm.update_rsi_thresholds(
+                    symbol=symbol,
+                    long_th=result.rsi_long_th,
+                    short_th=result.rsi_short_th,
+                    current_rsi=result.rsi_value,
+                )
+            except Exception as e:
+                logger.warning(f"{symbol}: eşik güncelleme hata - {e}")
+
+        # Crossover var ama filtreye takıldı?
         if result.crossover_happened and not result.has_signal:
             filter_rejections.append(
                 (symbol, result.crossover_side, result.rejection_reason or "?")
@@ -103,19 +111,21 @@ def entry_scan_job():
             STATE.notifier.send(tg_fmt.fmt_max_positions(symbol, side))
             continue
 
-        # ATR hesapla (CE ve BE için)
+        # ATR hesapla
         try:
             entry_atr = strategy.compute_entry_atr(df_30m)
         except Exception as e:
             logger.error(f"{symbol}: ATR hesap hata - {e}")
             continue
 
-        # Pozisyon aç (CE entry'nin 1 ATR gerisinde otomatik hesaplanır)
+        # Pozisyon aç
         try:
             pos = STATE.pm.open_position(
                 symbol=symbol,
                 side=side,
                 entry_atr=entry_atr,
+                rsi_long_th=result.rsi_long_th,
+                rsi_short_th=result.rsi_short_th,
             )
         except Exception as e:
             logger.error(f"{symbol}: pozisyon açma hata - {e}")
@@ -168,8 +178,18 @@ def exit_scan_job():
     if STATE.pm.count() == 0:
         return
 
+    def kline_fetcher(symbol):
+        """RSI hesabı için 30dk kline çek (kapanmamış mum dahil)."""
+        try:
+            return STATE.client.fetch_klines(
+                symbol, config.KLINE_INTERVAL_30M, config.KLINE_LIMIT
+            )
+        except Exception as e:
+            logger.warning(f"{symbol}: exit scan kline hata - {e}")
+            return None
+
     try:
-        closed = STATE.pm.scan_exits()
+        closed = STATE.pm.scan_exits(kline_fetcher)
     except Exception as e:
         logger.error(f"Çıkış taraması hata - {e}")
         STATE.notifier.send(tg_fmt.fmt_error("exit scan", str(e)))
@@ -179,6 +199,7 @@ def exit_scan_job():
         STATE.notifier.send(tg_fmt.fmt_exit(
             symbol=pos.symbol,
             side=pos.side,
+            entry_price=pos.entry_price,
             exit_price=exit_price,
             reason=reason,
             pnl_usdt=pnl_usdt,
@@ -188,7 +209,6 @@ def exit_scan_job():
 
 # ============= BAŞLANGIÇ =============
 def initialize() -> None:
-    """Bot'u başlat: validasyon, client, bakiye, kaldıraç, instrument cache."""
     config.validate()
 
     STATE.client = BybitClient()
