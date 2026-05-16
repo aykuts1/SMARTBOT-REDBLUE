@@ -20,6 +20,7 @@ from typing import List
 
 import config
 import strategy
+import indicators
 import telegram_bot as tg
 from bybit_client import BybitClient
 from position_manager import (
@@ -406,6 +407,158 @@ def maybe_send_daily_summary(last_sent_date) -> object:
 
 
 # ============================================================
+# RESTORE OPEN POSITIONS (after bot restart)
+# ============================================================
+def restore_open_positions(client: BybitClient, pm: PositionManager) -> None:
+    """
+    Read open positions from Bybit and rebuild full state:
+      - Find entry candle from createdTime
+      - Compute ATR at entry candle
+      - Scan from entry to now for extreme_price
+      - Determine current stage from peak profit
+      - Read existing SL from exchange
+      - Recompute CE if applicable
+    """
+    try:
+        open_positions = client.get_open_positions()
+    except Exception as e:
+        print(f"[ERR] get_open_positions: {e}")
+        tg.send_error("Açık pozisyonlar okunamadı", str(e))
+        return
+
+    if not open_positions:
+        print("[RESTORE] No open positions to restore")
+        return
+
+    restored = 0
+    for ex_pos in open_positions:
+        symbol = ex_pos.get("symbol", "?")
+        try:
+            side = ex_pos["side"]
+            qty = float(ex_pos.get("size", 0) or 0)
+            entry_price = float(ex_pos.get("avgPrice", 0) or 0)
+            created_time_ms = int(ex_pos.get("createdTime", 0) or 0)
+            sl_str = ex_pos.get("stopLoss", "0")
+            current_sl = float(sl_str) if sl_str and sl_str != "0" else 0.0
+            lev_str = ex_pos.get("leverage", str(config.LEVERAGE))
+            leverage_used = int(float(lev_str)) if lev_str else config.LEVERAGE
+
+            if qty <= 0 or entry_price <= 0 or created_time_ms <= 0:
+                print(f"[WARN] Skip {symbol}: incomplete data")
+                continue
+
+            # Fetch klines (1000 max ~ 3.5 days of 5min candles)
+            klines = client.get_klines(symbol, config.TIMEFRAME, 1000)
+            # Strip current open candle
+            if len(klines) >= 2:
+                klines = klines[:-1]
+            if len(klines) < config.ATR_PERIOD + 5:
+                print(f"[WARN] Skip {symbol}: insufficient klines")
+                continue
+
+            # Find the entry candle: kline.start <= createdTime < kline.start + 300_000
+            entry_idx = None
+            for i, k in enumerate(klines):
+                if k["start"] <= created_time_ms < k["start"] + 300_000:
+                    entry_idx = i
+                    break
+            if entry_idx is None:
+                # Fallback: closest candle whose start <= created_time
+                for i in range(len(klines) - 1, -1, -1):
+                    if klines[i]["start"] <= created_time_ms:
+                        entry_idx = i
+                        break
+            if entry_idx is None:
+                # Position older than our kline history → use oldest available
+                entry_idx = 0
+                print(f"[WARN] {symbol}: entry older than kline history, using oldest")
+
+            # Compute ATR at entry candle
+            highs = [k["high"] for k in klines]
+            lows = [k["low"] for k in klines]
+            closes = [k["close"] for k in klines]
+            atr_series = indicators.atr(highs, lows, closes, config.ATR_PERIOD)
+            atr_at_entry = atr_series[entry_idx]
+            if atr_at_entry is None:
+                # Use the latest ATR as fallback
+                latest_atr = next((v for v in reversed(atr_series) if v is not None), None)
+                atr_at_entry = latest_atr or 0.0
+            if atr_at_entry <= 0:
+                print(f"[WARN] Skip {symbol}: no valid ATR")
+                continue
+
+            # Reconstruct stake used (margin = notional / leverage)
+            notional = qty * entry_price
+            stake_used = notional / max(leverage_used, 1)
+
+            # Find extreme price from entry candle to now
+            if side == "Buy":
+                extreme = max(entry_price, *(k["high"] for k in klines[entry_idx:]))
+            else:
+                extreme = min(entry_price, *(k["low"] for k in klines[entry_idx:]))
+
+            # Build position
+            pos = Position(
+                symbol=symbol,
+                side=side,
+                entry_price=entry_price,
+                qty=qty,
+                stake_usdt=stake_used,
+                leverage=leverage_used,
+                atr_at_entry=atr_at_entry,
+                open_time=created_time_ms / 1000.0,
+                stage=STAGE_ENTRY,
+                ce_level=None,
+                current_sl=current_sl,
+                extreme_price=extreme,
+            )
+
+            # Determine current stage from peak profit
+            peak_pct = pos.profit_pct_at(extreme)
+            peak_atr = pos.profit_atr_at(extreme)
+
+            if peak_atr >= config.STAGE3_TRIGGER_ATR:
+                pos.stage = STAGE_3_ATR
+            elif peak_atr >= config.STAGE2_TRIGGER_ATR:
+                pos.stage = STAGE_2_ATR
+            elif peak_pct >= config.STAGE1_TRIGGER_PCT:
+                pos.stage = STAGE_1_PCT
+
+            # Compute CE if applicable (Stage 2 or 3)
+            if pos.stage >= STAGE_2_ATR:
+                pos.ce_level = pos.compute_ce()
+
+            pm.open(pos)
+            restored += 1
+
+            stage_names = {
+                STAGE_ENTRY: "Giriş (SL %1)",
+                STAGE_1_PCT: "Aşama 1 (SL +%1 kâr)",
+                STAGE_2_ATR: "Aşama 2 (CE 2 ATR aktif)",
+                STAGE_3_ATR: "Aşama 3 (CE 1 ATR aktif)",
+            }
+            stage_text = stage_names.get(pos.stage, "?")
+            direction = "LONG" if side == "Buy" else "SHORT"
+            ce_text = f"{pos.ce_level}" if pos.ce_level is not None else "—"
+            tg.send_info(
+                f"🔄 <b>Mevcut pozisyon yüklendi</b>: <code>{symbol}</code> ({direction})\n"
+                f"Giriş: {entry_price} | Peak: {extreme}\n"
+                f"Durum: <b>{stage_text}</b>\n"
+                f"SL: {current_sl} | CE: {ce_text}\n"
+                f"ATR: {atr_at_entry:.6f} | Peak profit: {peak_pct*100:.2f}% / {peak_atr:.2f} ATR"
+            )
+            print(f"[RESTORE] {symbol} {side} stage={pos.stage} extreme={extreme} ce={pos.ce_level}")
+
+        except Exception as e:
+            tb = traceback.format_exc()
+            print(f"[ERR] restore {symbol}: {e}\n{tb}")
+            continue
+
+    if restored > 0:
+        print(f"[RESTORE] {restored} position(s) restored")
+
+
+# ============================================================
 # STARTUP
 # ============================================================
 def startup(client: BybitClient) -> None:
@@ -441,6 +594,17 @@ def main():
         except Exception:
             pass
         return
+
+    # Restore any open positions from Bybit (e.g. after restart)
+    try:
+        restore_open_positions(client, pm)
+    except Exception as e:
+        tb = traceback.format_exc()
+        print(f"[ERR] restore_open_positions: {e}\n{tb}")
+        try:
+            tg.send_error("Pozisyon geri yükleme hatası", str(e))
+        except Exception:
+            pass
 
     last_entry_scan_slot = -1
     last_exit_scan = 0.0
