@@ -75,40 +75,30 @@ def send_entry(symbol: str, side: str, price: float, qty: float, stake: float,
     _send(msg)
 
 
-def send_stage1(symbol: str, side: str, price: float, new_sl: float, profit_pct: float) -> None:
-    """Stage 1: +%1.2 peak → SL moves to +%1 profit."""
+def send_stage1(symbol: str, side: str, price: float, new_sl: float, ce_level: float,
+                atr_value: float) -> None:
+    """Stage 1: +2 ATR peak → SL to +0.5% profit, CE 4 ATR active."""
     msg = (
-        f"🔒 <b>AŞAMA 1 — SL KÂRA TAŞINDI</b>\n"
+        f"⚙️ <b>AŞAMA 1 — CE AKTİF (4 ATR)</b>\n"
         f"<code>{symbol}</code> ({'LONG' if side == 'Buy' else 'SHORT'})\n"
-        f"Fiyat: {price} (peak +{profit_pct*100:.2f}%)\n"
-        f"Yeni SL: <b>{new_sl}</b> (+%1 kârda)"
+        f"Fiyat: {price} (peak +2 ATR)\n"
+        f"Yeni SL: <b>{new_sl}</b> (+%0.5 kârda)\n"
+        f"CE: <b>{ce_level}</b> (4 ATR geriden)\n"
+        f"ATR: {atr_value:.6f}"
     )
     _send(msg)
 
 
 def send_stage2(symbol: str, side: str, price: float, new_sl: float, ce_level: float,
                 atr_value: float) -> None:
-    """Stage 2: +2 ATR peak → SL to +0.2 ATR, CE 2 ATR active."""
+    """Stage 2: +6 ATR peak → SL to +0.2 ATR profit, CE narrows to 3 ATR."""
     msg = (
-        f"⚙️ <b>AŞAMA 2 — CE AKTİF (2 ATR)</b>\n"
-        f"<code>{symbol}</code> ({'LONG' if side == 'Buy' else 'SHORT'})\n"
-        f"Fiyat: {price} (peak +2 ATR)\n"
-        f"Yeni SL: <b>{new_sl}</b> (+0.2 ATR kârda)\n"
-        f"CE: <b>{ce_level}</b> (2 ATR geriden)\n"
-        f"ATR: {atr_value:.6f}"
-    )
-    _send(msg)
-
-
-def send_stage3(symbol: str, side: str, price: float, ce_level: float, atr_value: float) -> None:
-    """Stage 3: +6 ATR peak → CE narrows to 1 ATR."""
-    msg = (
-        f"🎯 <b>AŞAMA 3 — CE DARALDI (1 ATR)</b>\n"
+        f"🎯 <b>AŞAMA 2 — CE DARALDI (3 ATR)</b>\n"
         f"<code>{symbol}</code> ({'LONG' if side == 'Buy' else 'SHORT'})\n"
         f"Fiyat: {price} (peak +6 ATR)\n"
-        f"CE: <b>{ce_level}</b> (1 ATR geriden)\n"
-        f"ATR: {atr_value:.6f}\n"
-        f"SL değişmedi (+0.2 ATR kârda)"
+        f"Yeni SL: <b>{new_sl}</b> (+0.2 ATR kârda)\n"
+        f"CE: <b>{ce_level}</b> (3 ATR geriden)\n"
+        f"ATR: {atr_value:.6f}"
     )
     _send(msg)
 
