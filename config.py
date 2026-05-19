@@ -64,7 +64,7 @@ TIMEFRAME = _config.get("timeframe", "5m")
 
 # Trade ayarları
 STAKE_PERCENTAGE = 0.20         # Bakiyenin %20'si stake
-LEVERAGE = 10                    # 50x kaldıraç
+LEVERAGE = 50                    # 50x kaldıraç
 MAX_POSITIONS = 5                # Maksimum eş zamanlı pozisyon
 STOP_LOSS_PERCENT = 0.01         # %1 SL (borsa tarafında)
 
