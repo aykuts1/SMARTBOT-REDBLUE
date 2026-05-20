@@ -53,7 +53,7 @@ python main.py
 
 Short simetrik.
 
-**BE Cizgisi:** Dis Bant × (1 ± maker_oran) -- komisyon karsilamasi.
+**BE Cizgisi:** Dis Bant × (1 ± maker_oran) -- komisyon karsilamasi..
 
 **Cikis Seviyeleri:**
 - Seviye 1: Giris (CE pasif)
