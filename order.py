@@ -169,23 +169,46 @@ def submit_entry(
     side: str,        # "LONG" / "SHORT"
     qty: float,
     instrument: dict,
-    max_attempts: int,
-    wait_seconds: int,
+    max_attempts: int,         # KULLANILMIYOR (geriye uyumluluk icin tutuluyor)
+    wait_seconds: int,         # KULLANILMIYOR (geriye uyumluluk icin tutuluyor)
     on_attempt_fail: Optional[Callable[[int, str], None]] = None,
 ) -> FillResult:
-    """Giris emri. Dolmadiysa filled=False doner, sinyal atlanmali."""
+    """
+    Giris emri - DOGRUDAN MARKET EMIR.
+    Limit/post-only denemesi yapilmaz. Sinyal aninda fiyattan piyasaya girilir.
+    """
     bybit_side = "Buy" if side == "LONG" else "Sell"
-    return _try_limit_loop(
-        bybit_client=bybit_client,
-        symbol=symbol,
-        bybit_side=bybit_side,
-        qty=qty,
-        instrument=instrument,
-        max_attempts=max_attempts,
-        wait_seconds=wait_seconds,
-        reduce_only=False,
-        on_attempt_fail=on_attempt_fail,
-    )
+
+    result = FillResult(filled=False)
+    qty_str = fmt_qty(qty, instrument["qty_step"])
+
+    try:
+        r = bybit_client.place_market_order(
+            symbol=symbol,
+            side=bybit_side,
+            qty=qty_str,
+            reduce_only=False,
+        )
+        # Market emir gercekleseni icin son fiyati al
+        try:
+            mp = bybit_client.fetch_last_price(symbol)
+        except Exception:
+            mp = 0.0
+
+        result.filled = True
+        result.market_fallback = True
+        result.avg_price = mp
+        result.qty = qty
+        result.attempts = 1
+        result.last_order_id = r.get("orderId")
+        result.last_price = mp
+    except Exception as e:
+        # Giriste market emir basarisizsa filled=False kalir, cagiran taraf "atlandi" gibi davranir
+        if on_attempt_fail:
+            on_attempt_fail(1, f"market emir basarisiz: {e}")
+        result.attempts = 1
+
+    return result
 
 
 def submit_exit(
@@ -194,34 +217,21 @@ def submit_exit(
     side: str,        # pozisyonun yonu ("LONG" / "SHORT")
     qty: float,
     instrument: dict,
-    max_attempts: int,
-    wait_seconds: int,
+    max_attempts: int,         # KULLANILMIYOR (geriye uyumluluk icin tutuluyor)
+    wait_seconds: int,         # KULLANILMIYOR (geriye uyumluluk icin tutuluyor)
     on_attempt_fail: Optional[Callable[[int, str], None]] = None,
 ) -> FillResult:
     """
-    Cikis emri. Limit denemeleri dolmadiysa MARKET emir ile kapatilir.
-    Tek market emir istisnasi burasidir.
+    Cikis emri - DOGRUDAN MARKET EMIR.
+    Slippage olabilir ama fiyat kacarken zarar daha yuksek oldugu icin
+    cikis daima market emir ile yapilir.
     """
     # Cikis emri yonu ters: LONG icin Sell, SHORT icin Buy
     bybit_side = "Sell" if side == "LONG" else "Buy"
 
-    result = _try_limit_loop(
-        bybit_client=bybit_client,
-        symbol=symbol,
-        bybit_side=bybit_side,
-        qty=qty,
-        instrument=instrument,
-        max_attempts=max_attempts,
-        wait_seconds=wait_seconds,
-        reduce_only=True,
-        on_attempt_fail=on_attempt_fail,
-    )
-
-    if result.filled:
-        return result
-
-    # --- Fallback: market emir ---
+    result = FillResult(filled=False)
     qty_str = fmt_qty(qty, instrument["qty_step"])
+
     try:
         r = bybit_client.place_market_order(
             symbol=symbol,
@@ -229,19 +239,20 @@ def submit_exit(
             qty=qty_str,
             reduce_only=True,
         )
-        # Market emirden hemen sonra son fiyati al
+        # Market emirden hemen sonra son fiyati al (PnL hesabi icin)
         try:
             mp = bybit_client.fetch_last_price(symbol)
         except Exception:
-            mp = result.last_price or 0.0
+            mp = 0.0
 
         result.filled = True
-        result.market_fallback = True
+        result.market_fallback = True   # market emir kullanildi
         result.avg_price = mp
         result.qty = qty
+        result.attempts = 1
         result.last_order_id = r.get("orderId")
+        result.last_price = mp
     except Exception as e:
-        # Market emir bile gonderilemediyse exception firlat
         raise RuntimeError(f"Cikis market emir basarisiz: {e}")
 
     return result
