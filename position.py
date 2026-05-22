@@ -171,7 +171,13 @@ def update_level_and_ce(
     else:
         trail = None
 
-    # --- CE guncelleme (asla geri cekilmez) ---
+    # --- Yeni bir CE seviyesine gecildiyse eski CE'yi sifirla ---
+    # Boylece CE2'ye gecince eski CE1 chandelier'i kullanilmaz,
+    # WINRATE'e gecince eski CE2 chandelier'i kullanilmaz.
+    if new_level != pos.level and new_level >= LEVEL_CE1:
+        pos.ce_price = None
+
+    # --- CE guncelleme (ayni seviye icinde asla geri cekilmez) ---
     if trail is not None:
         candidate = _compute_ce(pos, trail)
         if pos.ce_price is None:
