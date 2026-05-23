@@ -75,10 +75,11 @@ class Config:
         c = raw["cikis"]
         self.ce1_atr:      float = float(c["CE1_ATR"])
         self.ce1_trail:    float = float(c["CE1_TRAIL"])
-        self.ce2_atr:      float = float(c["CE2_ATR"])
-        self.ce2_trail:    float = float(c["CE2_TRAIL"])
         self.winrate_atr:  float = float(c["WINRATE_ATR"])
         self.winrate_trail: float = float(c["WINRATE_TRAIL"])
+        # ce2 KULLANILMIYOR (CE2 seviyesi kaldirildi) - geriye uyumluluk icin
+        self.ce2_atr:      float = 0.0
+        self.ce2_trail:    float = 0.0
 
         # --- Emir ---
         e = raw["emir"]
