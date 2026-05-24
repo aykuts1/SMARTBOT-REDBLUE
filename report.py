@@ -69,7 +69,9 @@ class ReportThread(threading.Thread):
         lines = ["📈 AÇIK POZİSYONLAR", "━━━━━━━━━━━━━━━━━━━━"]
         for pos in positions:
             try:
-                price = self.bybit.get_price(pos["coin"])
+                price = state.get_cached_price(pos["coin"])
+                if price is None:
+                    price = pos["entry_price"]
                 gross, _, price_diff = self.calculate_unrealized_pnl(pos, price)
             except Exception:
                 gross = 0.0
