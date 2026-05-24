@@ -74,9 +74,13 @@ class ExitThread(threading.Thread):
                 self.handle_external_close(pos)
                 return
 
-        # 2. Guncel fiyat ve bantlar
-        price = self.bybit.get_price(coin)
-        klines = self.bybit.get_klines(coin, self.timeframe, limit=200)
+        # 2. Guncel fiyat ve bantlar (cache'den)
+        price = state.get_cached_price(coin)
+        klines = state.get_cached_klines(coin)
+        if price is None or klines is None:
+            return  # Cache yok, atla
+        if state.get_cache_age(coin) > 15:
+            return  # Cache eskimis, atla
         bands = calculate_bands(klines, self.config)
 
         # 3. En yuksek/dusuk fiyat takibi (chandelier icin)
@@ -392,7 +396,9 @@ class ExitThread(threading.Thread):
             else:
                 reason = "MANUEL EXIT"
         else:
-            exit_price = self.bybit.get_price(coin)
+            exit_price = state.get_cached_price(coin)
+            if exit_price is None:
+                exit_price = pos["entry_price"]
             gross, net, commission = self.calculate_pnl(pos, exit_price)
             real_pnl = gross
             reason = "MANUEL EXIT"
