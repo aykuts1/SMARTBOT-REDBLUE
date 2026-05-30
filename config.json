@@ -27,7 +27,8 @@
     "ema_period": 800,
     "timeframe": "15",
     "candle_count": 900,
-    "price_update_interval_sec": 5,
+    "price_update_interval_sec": 1,
     "candle_fetch_delay_sec": 1,
-    "thread_scan_interval_sec": 5
+    "thread_scan_interval_sec": 1,
+    "position_sync_interval_sec": 1
 }
