@@ -101,6 +101,14 @@ class Bot:
         self.blue_thread.start()
         self.yellow_thread.start()
 
+        # Pozisyon önbelleğini ilk başta doldur — Mavi/Sarı yanlış pozitif
+        # "Kırmızı Bybit'te yok" alarmı vermesin diye.
+        try:
+            log.info("Başlangıç pozisyon senkronizasyonu yapılıyor...")
+            self.dm.sync_open_positions()
+        except Exception as e:
+            log.exception(f"Başlangıç pozisyon senkron hatası: {e}")
+
         # Madde 56: başlangıçta otomatik flag taraması (boundary beklemeden)
         try:
             log.info("Başlangıç flag taraması yapılıyor...")
@@ -142,23 +150,33 @@ class Bot:
     def _scheduler_loop(self):
         """
         Master zamanlayıcı:
-        - Her 5sn fiyat çek
+        - Her 1sn fiyat çek
+        - Her 1sn açık pozisyonları senkronize et (Mavi/Sarı için)
         - 15dk mum kapanışında mum verisi çek + flag scan
         - 12h stake güncelle
         - Her tick thread sağlık kontrolü (auto-recovery)
         """
         log.info("Scheduler başladı.")
         last_price_fetch = 0.0
+        last_position_sync = 0.0
         while not self._scheduler_stop.is_set():
             now = time.time()
 
-            # 5sn fiyat
+            # Fiyat çekme
             if now - last_price_fetch >= self.cfg.price_update_interval_sec:
                 try:
                     self.dm.fetch_all_prices()
                 except Exception as e:
                     log.exception(f"Fiyat çekme hatası: {e}")
                 last_price_fetch = now
+
+            # Pozisyon senkron (Mavi/Sarı bağlı Kırmızı kontrolü için)
+            if now - last_position_sync >= self.cfg.position_sync_interval_sec:
+                try:
+                    self.dm.sync_open_positions()
+                except Exception as e:
+                    log.exception(f"Pozisyon senkron hatası: {e}")
+                last_position_sync = now
 
             # 15dk kontrol
             try:
@@ -178,7 +196,7 @@ class Bot:
             except Exception as e:
                 log.exception(f"Thread health check hatası: {e}")
 
-            time.sleep(1.0)
+            time.sleep(0.5)
         log.info("Scheduler durdu.")
 
     def _check_15m_close(self):
